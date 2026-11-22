@@ -11,12 +11,12 @@ These define the shared interface for everything after, so they should be **reus
 - [ ] **EDA** (`notebooks/01_eda.ipynb`): event classes and class balance, sequence lengths,
       time gaps and bursts, missingness, correlated or redundant sensors, per-system differences,
       transition matrix. Save the key figures to `reports/figures/`.
-- [ ] **Sample construction** (`src/eventflow/data.py`): turn complete training histories into
-      (prefix → next event) examples whose prefix lengths match the test set (90–250).
-      Cache to parquet in `outputs/`.
-- [ ] **Validation strategy** (`src/eventflow/validation.py`): group split by `sequence_id`
-      (GroupKFold or a fixed holdout), with no future information. **Freeze it** so every model
-      uses the same folds.
+- [x] **Sample construction** (`src/eventflow/data.py`): turn complete training histories into
+      (prefix → next event) examples whose prefix lengths match the test set (90–220).
+      Raw data is cached to parquet in `outputs/cache/`; examples are cheap to rebuild, so not cached.
+- [x] **Validation strategy** (`src/eventflow/validation.py`): group split by `sequence_id`
+      (5 folds, seed 2210, tuning on fold 0), with no future information. **Frozen**: every model
+      uses the same folds. Checked in `notebooks/02_validation.ipynb`.
 - [ ] **Baselines**: reproduce uniform (~2.64), transition table (~1.81) and template LR (~1.75)
       through `metrics.multiclass_log_loss`, logged to `experiments/results.csv`.
 
@@ -47,6 +47,8 @@ These define the shared interface for everything after, so they should be **reus
 - [ ] Final test-set evaluation (once).
 - [ ] Error analysis of the final model: per-class loss, confusion between similar events,
       performance vs prefix length, calibration.
+- [ ] Re-check "loss by prefix length" (02_validation, Section 3) for the long-context deep models:
+      if they improve with longer prefixes, compare the primary metric with the length-matched one.
 
 ### B
 - [ ] Train a reduced event (+ time-gap) model for rollouts.
