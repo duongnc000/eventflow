@@ -79,9 +79,29 @@ def count_features(df, windows=WINDOWS):
 #cnt30_COMPONENT_REPLACED = 1 at row 183 means that in the 30 events from row 154 to row 183 of machine TR00000, COMPONENT_REPLACED happened exactly once.
 
 
+def since_features(df):
+    """Group 3 SINCE: for each event type, how many events ago it last happened in this sequence
+    (0 = it is the current event, NaN = it has not happened yet in this sequence)."""
+    
+    codes = encode_events(df[EVENT_COL]).astype(np.int64) 
+    pos = _positions(df)
+    rows = np.arange(len(df))
+    seq_start = rows - pos                       # first row of each row's sequence/machine eg ([0, 0, 0, 0, 0, 5, 5, 5]) 0 seq1, 5 is start of seq 2
+    out = {}
+    for j, name in enumerate(EVENT_CLASSES):
+        # eg j = 12, name = "TEMP_WARNING".
+        last = np.maximum.accumulate(np.where(codes == j, rows, -1))  #codes == 12:  [ T,  F,  F,  F,  T,  F,  T,  F] => [ 0, -1, -1, -1,  4, -1,  6, -1] =>  [ 0,  0,  0,  0,  4,  4,  6,  6]
+        since = (rows - last).astype(np.float32) #rows:    [0, 1, 2, 3, 4, 5, 6, 7] last:    [0, 0, 0, 0, 4, 4, 6, 6] since:   [0, 1, 2, 3, 0, 1, 0, 1]
+        since[last < seq_start] = np.nan         # last seen in an earlier sequence, or never: not this one => [0, 1, 2, 3, 0, NaN, 0, 1] =>
+        out[f"since_{name}"] = since #row	                0	1	2	3	4	5	6	7
+                                     #since_TEMP_WARNING	0	1	2	3	0	NaN	0	1
+    return pd.DataFrame(out, index=df.index)
+
+
 FEATURE_GROUPS = {
     "recent": recent_features,
     "counts": count_features,
+    "since": since_features,
 }
 
 
@@ -90,4 +110,4 @@ def make_features(df, groups=None):
     _check_layout(df)
     groups = list(FEATURE_GROUPS) if groups is None else groups
     return pd.concat([FEATURE_GROUPS[g](df) for g in groups], axis=1)
-    #recent (7 columns) + counts (42 columns) => one table, 49 columns
+    #recent (7 columns) + counts (42 columns) + since (14) => one table, 63 columns
