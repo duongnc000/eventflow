@@ -95,13 +95,35 @@ def since_features(df):
         since[last < seq_start] = np.nan         # last seen in an earlier sequence, or never: not this one => [0, 1, 2, 3, 0, NaN, 0, 1] =>
         out[f"since_{name}"] = since #row	                0	1	2	3	4	5	6	7
                                      #since_TEMP_WARNING	0	1	2	3	0	NaN	0	1
-    return pd.DataFrame(out, index=df.index)
+    return pd.DataFrame(out, index=df.index) # 14 since of each event
 
+def habit_features(df): #output the share of each event so far and the mean of severyty so far for each state by the total amount of events so far
+    """Group 4 HABITS: what this machine is like SO FAR (from the start of its sequence up to this
+    row, never the whole diary): the share of each event type, the average severity, and how many
+    events it has had."""
+    codes = encode_events(df[EVENT_COL]).astype(np.int64) #[0, 1, 1, 0, 1, 2, 1]
+    pos = _positions(df) # [0, 1, 2, 3, 4, 0, 1]    => machine B starts again at 0
+    rows = np.arange(len(df)) #[0, 1, 2, 3, 4, 5, 6]
+    seq_start = rows - pos  # first row of each row's sequence => [0, 0, 0, 0, 0, 5, 5]
+    n_so_far = pos + 1   # events so far, including this one #[1, 2, 3, 4, 5, 1, 2]
+    one_hot = np.eye(N_CLASSES, dtype=np.int32)[codes] # create one hot encoding for each event for every row
+    running = np.vstack([np.zeros((1, N_CLASSES), np.int32), one_hot.cumsum(axis=0)]) # total down each column(eventype) for every row, eg at row:7 =>	2TEMP	4REC	1LOAD
+    counts_so_far = running[rows + 1] - running[seq_start]   # total up to this row total before each machine started(if a machine start remove the count for the prev machine) at row 5 => [2,3,1] - running[5]: [2,3,0] = 0, 0, 1 (only LOAD)
+    out = {}
+    for j, name in enumerate(EVENT_CLASSES): # why share not count bc counts grow as the diary gets longer, so they're harder to compare using count
+        out[f"share_{name}"] = (counts_so_far[:, j] / n_so_far).astype(np.float32) # share of count => share = (how many of this event so far) ÷ (how many events so far)
+
+    sev = df["severity"].to_numpy(dtype=float)
+    sev_running = np.concatenate([[0.0], np.cumsum(sev)])    # running total of severity
+    out["mean_severity_so_far"] = ((sev_running[rows + 1] - sev_running[seq_start]) / n_so_far).astype(np.float32) # same thing for severity (mean = the total severity so far for each machine or seq / total event so far each machine)
+    out["events_so_far"] = n_so_far.astype(np.int16) #[1, 2, 3, 4, 5, 1, 2]
+    return pd.DataFrame(out, index=df.index) #14 event shares  +  1 mean severity  +  1 events so far  =  16 columns
 
 FEATURE_GROUPS = {
     "recent": recent_features,
     "counts": count_features,
     "since": since_features,
+    "habits": habit_features,
 }
 
 
@@ -110,4 +132,4 @@ def make_features(df, groups=None):
     _check_layout(df)
     groups = list(FEATURE_GROUPS) if groups is None else groups
     return pd.concat([FEATURE_GROUPS[g](df) for g in groups], axis=1)
-    #recent (7 columns) + counts (42 columns) + since (14) => one table, 63 columns
+    # recent (7) + counts (42) + since (14) + habits (16) => one table, 79 columns
