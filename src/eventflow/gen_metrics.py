@@ -2,7 +2,8 @@
 
 Every function takes a list of sequences, and each sequence is a list of events, e.g.
     real = [["TEMP_WARNING", "COOLING_ACTIVATED", "RECOVERY"], ["LOAD_INCREASE", ...], ...]
-Event names or class codes (0..13) both work.
+Events can be names or class codes (0..13), but every set passed to one call must use the SAME
+format: a name never equals a code, so mixing them would silently report "nothing in common".
 
 Three kinds of check:
   1. MIX      are the events equally common in real and fake?          event_js
@@ -11,6 +12,7 @@ Three kinds of check:
                                                                        duplicate_rate, copy_rate,
                                                                        nearest_neighbour_similarity
 Compare real and fake sets of the SAME size and length: the variety numbers depend on both.
+Empty inputs give NaN.
 """
 
 from collections import Counter
@@ -18,105 +20,146 @@ from collections import Counter
 import numpy as np
 
 
-def ngrams(seq, n): #cuts sequence  into every run of n in a row
+def _check_same_format(*sets):
+    """Raise if one set uses event names and another uses class codes."""
+    kinds = set()
+    for seqs in sets:
+        for seq in seqs:
+            if len(seq):
+                kinds.add(isinstance(seq[0], str))
+                break
+    if len(kinds) > 1:
+        raise ValueError("mixed event formats: use event names everywhere or class codes everywhere")
+
+
+def ngrams(seq, n):
     """All runs of n events in a row: ngrams([A, B, C], 2) -> [(A, B), (B, C)]."""
     seq = list(seq)
     return [tuple(seq[i:i + n]) for i in range(len(seq) - n + 1)]
 
 
-#seqs = [["TEMP", "COOL", "REC"],     # machine 1
-#        ["TEMP", "COOL"]]            # machine 2
-#ngram_counts(seqs, 2)
-#-> {("TEMP","COOL"): 2, ("COOL","REC"): 1}
 def ngram_counts(seqs, n):
-    """How often each n-gram appears, counted inside each sequence (never across two sequences)."""
+    """How often each n-gram appears, counted inside each sequence (never across two sequences).
+
+    ngram_counts([["TEMP", "COOL", "REC"], ["TEMP", "COOL"]], 2)
+    -> {("TEMP", "COOL"): 2, ("COOL", "REC"): 1}
+    """
     counts = Counter()
     for seq in seqs:
         counts.update(ngrams(seq, n))
     return counts
 
 
-def js_divergence(counts_a, counts_b): #real tally (counts_a): TEMP 2, COOL 2, fake tally (counts_b): TEMP 3, REC 1
-    """Jensen-Shannon divergence of two count tables, in bits: 0 = identical, 1 = nothing shared."""
-    keys = list(set(counts_a) | set(counts_b)) # => combine both then remove dup => [TEMP, COOL, REC]
-    p = np.array([counts_a.get(k, 0) for k in keys], dtype=float) #p:2,2,0 
-    q = np.array([counts_b.get(k, 0) for k in keys], dtype=float) #q:3,0,1
-    p, q = p / p.sum(), q / q.sum() #turn to share p:0.5,0.5,0 q:0.75,0,0.25
-    m = (p + q) / 2  #make the middle m: 0.625,0.25, 0.125
+def js_divergence(counts_a, counts_b):
+    """Jensen-Shannon divergence of two count tables, in bits: 0 = identical, 1 = nothing shared.
 
-    def kl(x):                      # "distance" of the probablity distrubtion to the middle between the two prob dis p and q, smaller kl =  more similar to the middle
+    Example:  a = {TEMP: 2, COOL: 2}         -> p = [0.5,  0.5, 0   ]  (over TEMP, COOL, REC)
+              b = {TEMP: 3, REC: 1}          -> q = [0.75, 0,   0.25]
+              middle m = (p + q) / 2              = [0.625, 0.25, 0.125]
+    JS = average of KL(p || m) and KL(q || m): how far each one is from the middle.
+    """
+    keys = list(set(counts_a) | set(counts_b))
+    p = np.array([counts_a.get(k, 0) for k in keys], dtype=float)
+    q = np.array([counts_b.get(k, 0) for k in keys], dtype=float)
+    if p.sum() == 0 or q.sum() == 0:
+        return float("nan")
+    p, q = p / p.sum(), q / q.sum()
+    m = (p + q) / 2
+
+    def kl(x):
+        # KL divergence of x from the middle m; terms with x = 0 contribute nothing
         nz = x > 0
         return np.sum(x[nz] * np.log2(x[nz] / m[nz]))
 
-    return float((kl(p) + kl(q)) / 2) #average kl, smaller aver kl mean p and q similar, 0 identical, 1 very dif
+    return float((kl(p) + kl(q)) / 2)
 
 
-def event_js(real, fake): # compute JS div between real and fake sequences wihout caring about order
+def event_js(real, fake):
     """1. MIX: compares how often each event appears. Ignores order."""
+    _check_same_format(real, fake)
     return js_divergence(ngram_counts(real, 1), ngram_counts(fake, 1))
 
 
-def ngram_js(real, fake, n=2): #  compute JS div between real and fake sequences but care about order
+def ngram_js(real, fake, n=2):
     """2. ORDER: compares how often each run of n events appears (n=2: 'A then B')."""
+    _check_same_format(real, fake)
     return js_divergence(ngram_counts(real, n), ngram_counts(fake, n))
 
 
-def unique_ngram_ratio(seqs, n=3): # ratio differnt window/ total window (seqs = [["A", "B", "C", "A", "B", "C", "A", "B", "C"]] => different ones: 3 (ABC, BCA, CAB), total: 7(ABC, BCA, CAB, ABC, BCA, CAB, ABC)) => 3/7
-    """3a. VARIETY: distinct n-grams / all n-grams. Low = the same patterns over and over."""
+def unique_ngram_ratio(seqs, n=3):
+    """3a. VARIETY: distinct n-grams / all n-grams. Low = the same patterns over and over.
+
+    e.g. [[A, B, C, A, B, C, A, B, C]] has 7 trigrams but only 3 distinct (ABC, BCA, CAB) -> 3/7.
+    """
     counts = ngram_counts(seqs, n)
     total = sum(counts.values())
-    return len(counts) / total if total else float("nan") # ratio = 1 no repeat, repeat close to 0 : repeat alot
+    return len(counts) / total if total else float("nan")
 
 
-def duplicate_rate(seqs): # count repeating of the whole sequence
-    """3b. VARIETY: share of sequences that are an exact copy of another one in the same set."""
+def duplicate_rate(seqs):
+    """3b. VARIETY: share of sequences that are an exact copy of an earlier one in the same set."""
+    if len(seqs) == 0:
+        return float("nan")
     seen, dupes = set(), 0
     for seq in seqs:
         key = tuple(seq)
         dupes += key in seen
         seen.add(key)
-    return dupes / len(seqs) #ratio dupes /total seqs
+    return dupes / len(seqs)
 
 
-def copy_rate(fake, train_seqs): # check if the fake/gen seqence is just taking the window from training seq to gen
-    """3c. MEMORISATION: share of fake sequences found word for word somewhere in the training data."""
+def copy_rate(fake, train_seqs):
+    """3c. MEMORISATION: share of fake sequences found word for word somewhere in the training data.
+
+    A fake sequence of length L counts as a copy if it equals any run of L events inside one
+    training sequence.
+    """
+    if len(fake) == 0:
+        return float("nan")
+    _check_same_format(fake, train_seqs)
+    # Every training window with the same length as some fake sequence (stored as hashes to save memory)
     windows = set()
-    for length in {len(seq) for seq in fake}: # check for every length of the fake seq
-        for seq in train_seqs: #for each seq in train
-            windows.update(hash(w) for w in ngrams(seq, length)) # hash each window of seq in train match length with fake seq
-    return sum(hash(tuple(seq)) in windows for seq in fake) / len(fake) # ratio of fake seqs that exactly match some training window
+    for length in {len(seq) for seq in fake}:
+        for seq in train_seqs:
+            windows.update(hash(w) for w in ngrams(seq, length))
+    return sum(hash(tuple(seq)) in windows for seq in fake) / len(fake)
 
 
-def nearest_neighbour_similarity(seqs, train_seqs): 
-#train_seqs = [["A","B","C","D"], ["C","D","E"]]
-#seqs       = [["B","C","D"],          # fake 1
-              #["B","A","D"],          # fake 2
-              #["E","A","B"]]
+def nearest_neighbour_similarity(seqs, train_seqs):
     """3d. MEMORISATION: for each sequence, the share of positions it has in common with its
     closest training window of the same length (1.0 = an exact copy). Returns the average.
 
     Compare fake against real held-out sequences: fake much higher than real = copying.
     Takes about 30-60 s for 1,300 sequences of 20 events against ~4,000 training sequences.
+
+    Example:  train = [[A, B, C, D], [C, D, E]]  -> windows of length 3: ABC, BCD, CDE
+              seqs  = [[B, C, D], [B, A, D], [E, A, B]]
+              best  = [3/3 (BCD), 2/3 (BAD vs BCD), 0/3]  -> average 0.556
     """
-    vocab = {e: i for i, e in enumerate(sorted({e for s in train_seqs for e in s}))} #give vocab {A: 0, B: 1, C: 2, D: 3, E: 4}.
+    if len(seqs) == 0:
+        return float("nan")
+    _check_same_format(seqs, train_seqs)
+    # Events -> small integers, so the comparison below runs on numpy arrays
+    vocab = {e: i for i, e in enumerate(sorted({e for s in train_seqs for e in s}))}
     best = []
     for length in sorted({len(s) for s in seqs}):
-        # every run of `length` events in the training data, one per row
-        #diary 1  A B C D → [0, 1, 2, 3] → [0, 1, 2][1, 2, 3]
-        #diary 2  C D E   → [2, 3, 4]    → [2, 3, 4] => window = [0, 1, 2]
-        #                                                        [1, 2, 3]
-        #                                                        [2, 3, 4]   
-        windows = np.concatenate([
-            np.lib.stride_tricks.sliding_window_view(np.array([vocab[e] for e in s], np.int8), length) # convert the trainign seq into numbers using vocab then slide the training seq by the lenght of each fake seq
+        # Every run of `length` events in the training data, one per row
+        windows = [
+            np.lib.stride_tricks.sliding_window_view(np.array([vocab[e] for e in s], np.int8), length)
             for s in train_seqs if len(s) >= length
-        ])
+        ]
+        if not windows:
+            raise ValueError(f"no training sequence has {length} events, so sequences of that "
+                             "length have no training window to compare with")
+        windows = np.concatenate(windows)
 
         for s in seqs:
             if len(s) == length:
-                codes = np.array([vocab.get(e, -1) for e in s], np.int8)   # convert code= [1 2 3][1 0 3][4 0 1]to num -1 = never seen in training 
-                matches = (windows == codes).sum(axis=1)                    # matching each code seq with the window(sum the matching number)
-                best.append(matches.max() / length) # take the max ratio for each code compare to window best = [1.0, 0.667, 0.0]
-    return float(np.mean(best)) #averge 0.5556
+                # -1 = an event never seen in training (matches nothing)
+                codes = np.array([vocab.get(e, -1) for e in s], np.int8)
+                matches = (windows == codes).sum(axis=1)   # positions in common with each window
+                best.append(matches.max() / length)
+    return float(np.mean(best))
 
 
 def summary(real, fake, train_seqs=None):
