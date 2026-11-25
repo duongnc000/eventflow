@@ -30,7 +30,7 @@ These define the shared interface for everything after, so they should be **reus
       last-3-events n-gram. Experiment: transition table trained on all events vs. on test-like
       cuts only. All on the 5 folds, logged to `experiments/results.csv`. No test labels.
       (Brief's test scores for reference: uniform ~2.64, transition ~1.81, template LR ~1.75.)
-- [ ] **Generation diagnostics** (`src/eventflow/gen_metrics.py`): event-frequency JS divergence,
+- [x] **Generation diagnostics** (`src/eventflow/gen_metrics.py`): event-frequency JS divergence,
       bigram/trigram comparison, diversity (unique n-gram ratio, duplicate rate,
       nearest-neighbour similarity to training), and optionally inter-arrival/burst statistics.
       Test them by comparing real sequences against shuffled ones.
