@@ -11,8 +11,10 @@ Feature groups (each group is one unit for the ablations):
   since    for each event type, how many events ago it last happened (NaN = not yet in this sequence)
   habits   what this machine is like so far: share of each event type, average severity, events so far
   timing   how fast events are happening: last 3 gaps, time taken by the last 5 / 20 events, usual pace, burst
+  sensors  8 sensor signals: current reading, median of the last 5 readings, average so far
 """
 
+import warnings
 import numpy as np
 import pandas as pd
 
@@ -23,6 +25,13 @@ N_LAGS = 3
 WINDOWS = (5, 10, 30)
 # Event-code columns: tell LightGBM these are categories, not numbers (["ev_lag0", "ev_lag1", "ev_lag2"])
 CATEGORICAL = [f"ev_lag{k}" for k in range(N_LAGS)]
+# Sensors (EDA section 7): duplicate probes are averaged into one signal, the other useful sensors are
+# kept as they are, and the noise channels (telemetry_ch_1-4, ambient_index, acoustic_level) are dropped.
+SENSOR_PAIRS = {"temp": ["temperature_reading", "temp_probe_b"],
+                "vib": ["vibration_reading", "vibration_probe_b"]}
+SENSORS = ["coolant_flow", "efficiency_estimate", "load_reading", "power_draw",
+           "control_signal", "pressure_reading"]
+MEDIAN_WINDOW = 5
 
 
 def _positions(df):
@@ -171,19 +180,66 @@ def timing_features(df):
     out["burst5"] = (np.log(time_back(5)) - np.log(5 * mean_gap)).astype(np.float32) # log( time the last 5 gaps took  ÷  (5 × mean gap so far) ), Negative → faster than usual (a burst),0 → the usual speed,Positive → slower than usual
     return pd.DataFrame(out, index=df.index)   # 3 gaps + 2 spans + usual pace + burst = 7 columns
 
+def sensor_features(df):
+    """Group 6 SENSORS: for each of 8 sensor signals, the current reading, the median of the last 5
+    readings (one spike or one missing value cannot move it) and the average so far in this sequence
+    (the machine's usual level). Missing readings are skipped; LightGBM handles any NaN that is left."""
+    pos = _positions(df) # [0, 1, 2, 0, 1]  <- machine B restarts at 0
+    rows = np.arange(len(df)) #[0, 1, 2, 3, 4]
+    seq_start = rows - pos # [0, 0, 0, 3, 3]  <- machine A starts at row 0, B at row 3
+    # One array per signal: the two temperature probes and the two vibration probes are averaged
+    # (if one probe is missing, the other one is used)
+    signals = {name: df[cols].mean(axis=1).to_numpy(dtype=float) for name, cols in SENSOR_PAIRS.items()} # create dict for average the two sensor(main and secondary(probe)) of temp and vibration => signals = {"temp": [0.43, 0.42, 0.44, 0.72, nan],"vib":  [0.51, 0.48, 0.59, 0.21, 0.23]},
+    signals.update({c: df[c].to_numpy(dtype=float) for c in SENSORS}) # add the other sensors as they are
+    # signals = {"temp":[0.43, 0.42, 0.44, 0.72, nan],"vib": [0.51, 0.48, 0.59, 0.21, 0.23],"coolant_flow":[0.30, 0.32, nan, 0.10, 0.12],"load_reading": [0.55, 0.54, 0.53, 0.40, 0.41],"efficiency_estimate": […],etc}
+    out = {}
+    for name, v in signals.items():
+        out[f"{name}_now"] = v.astype(np.float32) #eg "temp_now":[0.43, 0.42, 0.44, 0.72, nan], etc
+
+        # The last 5 readings side by side (NaN before the start of the sequence), then their median
+        #   e.g. readings 0.42, 0.44, 3.90 (spike), NaN (missing), 0.43  ->  median of the 4 real ones = 0.435
+        last = np.full((len(df), MEDIAN_WINDOW), np.nan) # An empty 5 × 5 table: 5 rows (events) × 5 columns (0–4 steps back), all NaN.
+        for k in range(MEDIAN_WINDOW):
+            ok = pos >= k
+            last[ok, k] = v[rows[ok] - k] # k(0,1,2,3,4) step back for each machine => for k= 0: [0.43, 0.42, 0.44, 0.72, nan],for k =1 :[nan,0.43, 0.42,nan, 0.72], k = 2:[nan,nan,0.43,nan,nan] 
+        #         k=0    k=1    k=2    k=3    k=4
+        #0 (A)    0.43    nan    nan    nan    nan
+        #1 (A)    0.42    0.43    nan    nan    nan
+        #2 (A)    0.44    0.42    0.43    nan    nan
+        #3 (B)    0.72    nan    nan    nan    nan
+        #4 (B)    nan    0.72    nan    nan    nan
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)   # all 5 missing -> NaN, which is fine
+            out[f"{name}_med{MEDIAN_WINDOW}"] = np.nanmedian(last, axis=1).astype(np.float32) # for each row in last, take the median => median at that row, slide the 5 event window then do medain of 5 event prev from current
+
+        # Average so far, skipping missing readings: running totals of the values and of how many
+        # readings there were, subtracted at the start of the sequence (same trick as count_features)
+        seen = ~np.isnan(v) # which readings are real [0.43, 0.42, 0.44, 0.72, nan] => [T, T, T, T, F]
+        sum_run = np.concatenate([[0.0], np.cumsum(np.where(seen, v, 0.0))]) # missing count as 0 [0.43, 0.42, 0.44, 0.72, 0.0], running total [0.43, 0.85, 1.29, 2.01, 2.01], add 0 infront sum_run = [0, 0.43, 0.85, 1.29, 2.01, 2.01]
+        # sum_run = the total of all readings before row i.
+        cnt_run = np.concatenate([[0], np.cumsum(seen)]) # running count of real readings, cnt_run = [0, 1, 2, 3, 4, 4]
+        total = sum_run[rows + 1] - sum_run[seq_start] # total so far in this machine  [0.43, 0.85, 1.29, 0.72, 0.72]
+        count = cnt_run[rows + 1] - cnt_run[seq_start] # number of real readings so far in this machine [1, 2, 3, 1, 1]
+        mean_so_far = np.full(len(df), np.nan)
+        has = count > 0
+        mean_so_far[has] = total[has] / count[has] # cal the mean so for of each machine (exclude nan)
+        out[f"{name}_mean_so_far"] = mean_so_far.astype(np.float32) # temp_mean_so_far [0.43,0.425,0.43,0.72,0.72]
+    return pd.DataFrame(out, index=df.index)   # 8 signals x 3 = 24 columns
+
 FEATURE_GROUPS = {
     "recent": recent_features,
     "counts": count_features,
     "since": since_features,
     "habits": habit_features,
     "timing": timing_features,
+    "sensors": sensor_features,
 }
 
 
 def make_features(df, groups=None):
     """All feature groups side by side, or only the ones in `groups` (e.g. for an ablation).
 
-    All five groups: 7 + 42 + 14 + 16 + 7 = 86 columns.
+    All six groups: 7 + 42 + 14 + 16 + 7 + 24 = 110 columns.
     """
     _check_layout(df)
     groups = list(FEATURE_GROUPS) if groups is None else groups
