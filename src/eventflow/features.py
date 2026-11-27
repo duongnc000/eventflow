@@ -9,6 +9,8 @@ Feature groups (each group is one unit for the ablations):
   recent   the last 3 events and their severities, and how many times in a row the last event repeated
   counts   how often each event type appeared in the last 5 / 10 / 30 events
   since    for each event type, how many events ago it last happened (NaN = not yet in this sequence)
+  habits   what this machine is like so far: share of each event type, average severity, events so far
+  timing   how fast events are happening: last 3 gaps, time taken by the last 5 / 20 events, usual pace, burst
 """
 
 import numpy as np
@@ -132,18 +134,56 @@ def habit_features(df): #output the share of each event so far and the mean of s
     out["events_so_far"] = n_so_far.astype(np.int16) #[1, 2, 3, 4, 5, 1, 2]
     return pd.DataFrame(out, index=df.index) #14 event shares  +  1 mean severity  +  1 events so far  =  16 columns
 
+def timing_features(df):
+    """Group 5 TIMING: how fast events have been happening, from the timestamps up to this row (never
+    the gap to the next event, which is unknown at prediction time). Gaps are skewed (0.05 to 7.5,
+    median about 1), so everything is on a log scale. NaN = not enough earlier events in this sequence."""
+    t = df["timestamp"].to_numpy(dtype=float)  # time when each event happen [10.0, 11.0, 11.5, 13.5, 1.3, 2.1]
+    pos = _positions(df) #[0, 1, 2, 3, 0, 1]
+    rows = np.arange(len(df)) #[0,1,2,3,4,5]
+
+    def time_back(n):
+        """Time from the event n steps back up to this event (NaN if the sequence has no such event)."""
+        span = np.full(len(df), np.nan) # [nan, nan, nan, nan, nan, nan]
+        ok = pos >= n # for n = 1 => [F, T, T, T, F, T] is there an event 1 step back in this machine
+        span[ok] = t[rows[ok]] - t[rows[ok] - n] # time now − time n events back, time_back(1) 
+        return span # time_back(1)  =[nan, 1.0, 0.5, 2.0, nan, 0.8], time_back(2)  =[nan, nan, 1.5, 2.5, nan, nan] 
+
+    out = {}
+    gap = time_back(1)                                # gap just before each event
+    for k in range(N_LAGS): # select the specific gap from the gaps(from [nan, 1.0, 0.5, 2.0, nan, 0.8]) => log_gap0 = [nan, 1.0, 0.5, 2.0, nan, 0.8]=>no shift,log_gap1 = [nan, nan, 1.0, 0.5, nan(bc it from machine B), nan]=> shift 1 in all seq, log_gap2 = [nan, nan, nan, 1.0, nan(bc it from machine B), nan] => shift 2 in all seq
+        # log_gap0 = gap before the current event, log_gap1 = gap before the previous event, ...
+        lag = np.full(len(df), np.nan) # [nan, nan, nan, nan, nan, nan]
+        ok = pos >= k # for k= 1 => [F, T, T, T, F, T]
+        lag[ok] = gap[rows[ok] - k] # rows[ok] = [1, 2, 3, 5], rows[ok - k] = [0, 1, 2, 4], gap[rows[ok] - k] = [nan, 1.0, 0.5, nan], lag = [nan, nan, 1.0, 0.5, nan, nan] here is log_gap1: The gap of the event 1 step before the current one
+        out[f"log_gap{k}"] = np.log(lag).astype(np.float32) #log_gap0: The gap of the current/last event, log_gap1: The gap of the event 1 step before the current one, log_gap2: The gap of the event 2 steps before the current one
+    for n in (5, 20):
+        # time taken by the last n events (n gaps), e.g. small = a burst of events
+        out[f"log_span{n}"] = np.log(time_back(n)).astype(np.float32) 
+
+    # This machine's usual pace so far: average gap from its first event up to now
+    seq_start = rows - pos #seq_start = [0, 0, 0, 0, 0, 0, 0, 0, 0 | 9, 9]
+    mean_gap = np.full(len(df), np.nan)
+    ok = pos > 0 #[F, T, T, T, T, T, T, T, T | F, T]
+    mean_gap[ok] = (t[ok] - t[seq_start[ok]]) / pos[ok] # minus the current event time witht the start of seq event time the divide by the total event from start to current
+    out["log_mean_gap_so_far"] = np.log(mean_gap).astype(np.float32)
+    # Burst: last 5 gaps compared with the usual pace (0 = usual, -0.7 = twice as fast, +0.7 = twice as slow)
+    out["burst5"] = (np.log(time_back(5)) - np.log(5 * mean_gap)).astype(np.float32) # log( time the last 5 gaps took  ÷  (5 × mean gap so far) ), Negative → faster than usual (a burst),0 → the usual speed,Positive → slower than usual
+    return pd.DataFrame(out, index=df.index)   # 3 gaps + 2 spans + usual pace + burst = 7 columns
+
 FEATURE_GROUPS = {
     "recent": recent_features,
     "counts": count_features,
     "since": since_features,
     "habits": habit_features,
+    "timing": timing_features,
 }
 
 
 def make_features(df, groups=None):
     """All feature groups side by side, or only the ones in `groups` (e.g. for an ablation).
 
-    All four groups: 7 + 42 + 14 + 16 = 79 columns.
+    All five groups: 7 + 42 + 14 + 16 + 7 = 86 columns.
     """
     _check_layout(df)
     groups = list(FEATURE_GROUPS) if groups is None else groups
