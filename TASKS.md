@@ -19,10 +19,13 @@ These define the shared interface for everything after, so they should be **reus
       test-like prefix lengths 90–220.
 - [x] **Validation strategy** (`src/eventflow/validation.py`, `notebooks/02_validation.ipynb`):
       frozen 5 folds grouped by `sequence_id`, unweighted primary metric + test-mimic check.
-- [ ] **Shared model interface**: every model implements `fit(data, train_examples)` and
-      `predict_proba(data, examples)`; `cross_validate(make_model, data, examples)` runs all folds
-      and returns per-fold scores; every model saves its out-of-fold predictions to `outputs/`.
-      Add the fold std and test-mimic score to `tracking.log_experiment`. Short usage example for B.
+- [x] **Shared model interface** (`src/eventflow/validation.py`, usage in `02_validation` Section 5):
+      every model implements `fit(data, examples)` and `predict_proba(data, examples)`;
+      `cross_validate(make_model, data, examples, folds=None, name=None)` runs the folds, checks the
+      output, saves out-of-fold predictions to `outputs/oof/<name>.parquet` (`load_oof`), and
+      `.log(...)` writes mean / std / mimic / per-fold scores to `experiments/results.csv`.
+      `holdout_sequences` = shared early-stopping split. Prediction files are not in git (size):
+      share the final models' files via Drive for the error analysis.
 
 ### B
 - [ ] **Baselines** (`notebooks/03_baselines.ipynb`, through the shared interface): uniform,

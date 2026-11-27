@@ -1,1 +1,1 @@
-timestamp,run_id,author,model,feature_set,val_logloss,test_logloss,params,notes
+timestamp,run_id,author,model,feature_set,folds,val_logloss,val_std,val_mimic,val_folds,test_logloss,params,notes
