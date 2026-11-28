@@ -1,1 +1,7 @@
 timestamp,run_id,author,model,feature_set,val_logloss,test_logloss,params,notes
+2026-11-28T14:08:32,baseline_uniform,Nam,uniform,baseline,2.63906,,"{""fold_std"": 0.0, ""logloss_mimic"": 2.63906}","5-fold mean, folds grouped by machine"
+2026-11-28T14:08:32,baseline_class_prior,Nam,class_prior,baseline,2.16384,,"{""alpha"": 1, ""fold_std"": 0.00421, ""logloss_mimic"": 2.16421, ""order"": 0}","5-fold mean, folds grouped by machine"
+2026-11-28T14:08:32,baseline_last1_table,Nam,last1_table,baseline,1.77102,,"{""alpha"": 0.1, ""fold_std"": 0.00294, ""logloss_mimic"": 1.7665, ""order"": 1}","5-fold mean, folds grouped by machine"
+2026-11-28T14:08:32,baseline_last1_table_all,Nam,last1_table_all,baseline,1.77462,,"{""alpha"": 0.1, ""fold_std"": 0.00279, ""logloss_mimic"": 1.77028, ""order"": 1, ""source"": ""all""}","5-fold mean, folds grouped by machine"
+2026-11-28T14:08:32,baseline_last3_table,Nam,last3_table,baseline,1.64404,,"{""alpha"": 100.0, ""fold_std"": 0.00343, ""logloss_mimic"": 1.63672, ""order"": 3}","5-fold mean, folds grouped by machine"
+2026-11-28T14:08:32,baseline_current_row_lr,Nam,current_row_lr,baseline,1.72278,,"{""fold_std"": 0.00252, ""logloss_mimic"": 1.71469, ""max_iter"": 400}","5-fold mean, folds grouped by machine"
