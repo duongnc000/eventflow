@@ -1,1 +1,7 @@
 timestamp,run_id,author,model,feature_set,folds,val_logloss,val_std,val_mimic,val_folds,test_logloss,params,notes
+2026-11-28T14:33:22,baseline_uniform,Nam,uniform,baseline,0-4,2.63906,0.00000,2.63906,"[2.63906, 2.63906, 2.63906, 2.63906, 2.63906]",,{},"5-fold cross_validate, folds grouped by machine"
+2026-11-28T14:33:22,baseline_class_prior,Nam,class_prior,baseline,0-4,2.16384,0.00421,2.16421,"[2.16341, 2.15688, 2.16766, 2.16486, 2.16641]",,"{""alpha"": 1, ""order"": 0}","5-fold cross_validate, folds grouped by machine"
+2026-11-28T14:33:22,baseline_last1_table,Nam,last1_table,baseline,0-4,1.77102,0.00294,1.76650,"[1.77007, 1.76819, 1.77342, 1.77479, 1.76865]",,"{""alpha"": 0.1, ""order"": 1}","5-fold cross_validate, folds grouped by machine"
+2026-11-28T14:33:22,baseline_last1_table_all,Nam,last1_table_all,baseline,0-4,1.77462,0.00279,1.77028,"[1.77363, 1.77244, 1.77645, 1.77855, 1.77205]",,"{""alpha"": 0.1, ""order"": 1, ""source"": ""all""}","5-fold cross_validate, folds grouped by machine"
+2026-11-28T14:33:22,baseline_last3_table,Nam,last3_table,baseline,0-4,1.64404,0.00343,1.63672,"[1.64347, 1.64056, 1.64798, 1.6472, 1.64101]",,"{""alpha"": 100.0, ""order"": 3}","5-fold cross_validate, folds grouped by machine"
+2026-11-28T14:33:22,baseline_current_row_lr,Nam,current_row_lr,baseline,0-4,1.72278,0.00252,1.71469,"[1.72132, 1.7201, 1.7248, 1.72605, 1.72164]",,"{""max_iter"": 400}","5-fold cross_validate, folds grouped by machine"
